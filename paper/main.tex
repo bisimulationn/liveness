@@ -1,0 +1,398 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{fontspec}
+\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+\usepackage{amsmath,amssymb,amsthm,stmaryrd}
+\usepackage{mathpartir}
+\usepackage{geometry}
+\geometry{margin=2.6cm}
+\usepackage{microtype}
+\usepackage[htt]{hyphenat}
+\emergencystretch=2em
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\Stmt}{\mathit{Stmt}}
+\newcommand{\Expr}{\mathit{Expr}}
+\newcommand{\State}{\mathit{State}}
+\newcommand{\Config}{\mathit{Config}}
+\newcommand{\skipS}{\mathtt{skip}}
+\newcommand{\ite}[3]{\mathtt{if}\ #1\ \mathtt{then}\ #2\ \mathtt{else}\ #3}
+\newcommand{\while}[2]{\mathtt{while}\ #1\ \mathtt{do}\ #2}
+\newcommand{\assign}[2]{#1 := #2}
+\newcommand{\seq}[2]{#1;\,#2}
+\newcommand{\step}{\rightarrow}
+\newcommand{\steps}{\rightarrow^{*}}
+\newcommand{\stepsn}[1]{\rightarrow^{#1}}
+\newcommand{\eval}[2]{\llbracket #1 \rrbracket_{#2}}
+\newcommand{\FV}{\mathit{FV}}
+\newcommand{\live}{\mathit{liveIn}}
+\newcommand{\opt}{\mathit{optimise}}
+\newcommand{\Agree}{\mathit{Agree}}
+\newcommand{\Term}{\mathit{Terminates}}
+\newcommand{\Div}{\mathit{Diverges}}
+\newcommand{\ObsEq}{\mathit{ObsEquiv}}
+\newcommand{\Match}{\mathit{Match}}
+\newcommand{\lfp}{\mathit{lfp}}
+\newcommand{\vars}{\mathit{vars}}
+\newcommand{\code}[1]{{\def\_{\char`\_\allowbreak}\texttt{#1}}}
+
+\title{Liveness: Verified Dead Store Elimination via Backwards Dataflow Analysis in Lean~4}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe a mechanised development in Lean~4 of dead store elimination for a small imperative language with assignments, sequencing, conditionals and while loops. The optimiser is driven by a backwards liveness analysis whose loop case is the least fixed point of a monotone functional on a finite powerset, computed by an executable Kleene iteration with a proved termination measure. The central theorem states that the optimised program is observationally equivalent to the source with respect to a chosen set of observed variables: each terminates exactly when the other does, and terminating runs end in states that agree on the observed variables. The theorem is proved twice, once by induction over big-step derivations in both directions and once by a stuttering forward simulation on the small-step semantics combined with a well-founded progress argument and determinism. The development uses only the Lean core library, contains no admitted goals or project axioms, and its main theorems depend only on the standard axioms of propositional extensionality, choice and quotient soundness.
+\end{abstract}
+
+\section{Introduction}
+
+Dead store elimination discards assignments whose written values are never read before the variable is assigned again or the program ends. It is a small optimisation, but its basis is the one shared by every dataflow-driven transformation: the compiler solves equations recursively over the program text to obtain a syntactic approximation of a semantic property, and the transformation is correct only if that approximation really bounds the property along every possible path through the program's execution. For liveness the equations are solved backwards through the program, while its interpretation moves forwards from an initial state through successive configurations. A verified optimiser therefore has to connect a backwards syntactic computation with a forwards semantic one, and that connection must hold for loops, where the backwards equation is recursive and only acquires a meaning through a fixed point.
+
+CompCert shows that such connections can be made at the level of a practically viable compiler \cite{Leroy2006popl,Leroy2009cacm,Leroy2009jar}, and Bertot, Gr\'egoire and Leroy showed how the proof of a dataflow-based optimisation can be organised around a general solver together with a specific soundness proof for each transformation \cite{BertotGregoireLeroy2006}. Benton proves dead code elimination correct in a relational setting by proposing an agreement relation, indexed by the live variables, that relates the executions of the two programs \cite{Benton2004}. The textbook of Nipkow and Klein carries out liveness-based dead assignment elimination for a comparable language in Isabelle/HOL \cite{NipkowKlein2014}. The current work belongs to this series of results and does not claim a novel approach. Its intention is to formalise the whole argument in Lean~4 \cite{MouraUllrich2021} at a size that remains manageable when read in its entirety, while the parts that are easy to simplify away keep their integrity: termination of the fixed-point solver without an iteration bound, divergence preservation without a fuel parameter, and a simulation argument that states exactly what is needed beyond the forward direction alone.
+
+The contributions of the artefact are the following. A small-step operational semantics is presented in which termination and divergence are defined without any fuel argument, and determinism, progress, uniqueness of outcomes, the equivalence of two formulations of divergence and the equivalence with a big-step relation are proved (Section~\ref{sec:semantics}). The equations defining backwards liveness are given together with their monotonicity and an upper bound expressed through the program's variables (Section~\ref{sec:liveness}). A terminating iteration over the finite powerset of the program's variables is presented and shown to produce the least fixed point (Section~\ref{sec:fixedpoint}). Dead store elimination is defined, and it is proved that it introduces no additional variables, that it respects set equality of live sets and that it is idempotent (Section~\ref{sec:dse}). Observational equivalence of source and target is proved by induction on big-step derivations and, independently, as a stuttering simulation (Section~\ref{sec:preservation}). Section~\ref{sec:mechanisation} describes the mechanisation together with its trusted base, and Section~\ref{sec:limitations} discusses the limitations.
+
+Throughout this paper the names of Lean declarations are given in typewriter font to aid checking the paper against the sources. Every claim made here is supported by a proof contained in the artefact, and every proof sketch follows the structure of the mechanised proof.
+
+\section{Language and operational semantics}
+\label{sec:semantics}
+
+\subsection{Syntax and states}
+
+Expressions and statements are the inductive types
+\begin{align*}
+e \in \Expr &::= n \mid x \mid e_1 + e_2 \mid e_1 - e_2 \\
+s \in \Stmt &::= \skipS \mid \assign{x}{e} \mid \seq{s_1}{s_2} \mid \ite{e}{s_1}{s_2} \mid \while{e}{s}
+\end{align*}
+where $n$ ranges over the integers and $x$ over strings (\code{Liveness.Expr}, \code{Liveness.Stmt}). A state $\sigma \in \State$ is a total function from strings to integers, and $\sigma[x \mapsto v]$ is the update that returns $v$ at $x$ and $\sigma(y)$ at $y \neq x$ (\code{State.update}, with the lookup lemmas \code{update\_same} and \code{update\_other}). Expression evaluation $\eval{e}{\sigma}$ is a total function defined by structural recursion (\code{eval}). Expressions have no side effects and cannot fail, so there is no exception or error state anywhere in the language.
+
+Conditionals and loops evaluate the integer $0$ as false and any nonzero integer as true. This is the only adherence to a truth encoding in the development, and it appears only in the inference rules for conditionals.
+
+\subsection{Small-step semantics}
+
+A configuration is a pair $(s, \sigma)$ of a statement and a state (\code{Config}). The step relation $\step$ is the inductive predicate \code{Step} with the rules
+\begin{mathpar}
+\inferrule{ }{(\assign{x}{e}, \sigma) \step (\skipS, \sigma[x \mapsto \eval{e}{\sigma}])}
+\and
+\inferrule{ }{(\seq{\skipS}{s}, \sigma) \step (s, \sigma)}
+\and
+\inferrule{(s_1, \sigma) \step (s_1', \sigma')}{(\seq{s_1}{s_2}, \sigma) \step (\seq{s_1'}{s_2}, \sigma')}
+\and
+\inferrule{\eval{e}{\sigma} \neq 0}{(\ite{e}{s_1}{s_2}, \sigma) \step (s_1, \sigma)}
+\and
+\inferrule{\eval{e}{\sigma} = 0}{(\ite{e}{s_1}{s_2}, \sigma) \step (s_2, \sigma)}
+\and
+\inferrule{ }{(\while{e}{s}, \sigma) \step (\ite{e}{(\seq{s}{\while{e}{s}})}{\skipS}, \sigma)}
+\end{mathpar}
+Its reflexive transitive closure $\steps$ (\code{Steps}) and the step-indexed relation $\stepsn{n}$ (\code{StepsN}) are defined as inductive predicates, since the Lean core library used by the development does not provide a reflexive transitive closure. The closure satisfies the expected lemmas: it is transitive, it is congruent for the first component of a sequence (\code{Steps.seq\_congr}), and $c \steps c'$ holds exactly when $c \stepsn{n} c'$ for some $n$.
+
+\begin{definition}[Termination and divergence]
+\label{def:term}
+\begin{align*}
+\Term(s, \sigma, \sigma') &:\Leftrightarrow (s, \sigma) \steps (\skipS, \sigma') \\
+\Div(c) &:\Leftrightarrow \forall n.\ \exists c'.\ c \stepsn{n} c' \\
+\mathit{InfiniteTrace}(c) &:\Leftrightarrow \exists f : \mathbb{N} \to \Config.\ f(0) = c \wedge \forall n.\ f(n) \step f(n+1)
+\end{align*}
+\end{definition}
+
+Fuel is irrelevant to both the concept of termination and that of divergence. Divergence is described as having runs of every finite length; an infinite run is shown below to be equivalent and is therefore a consequence rather than a separate definition.
+
+\begin{theorem}[Basic properties, \code{Liveness/Semantics.lean}]
+\label{thm:basic}
+\leavevmode
+\begin{enumerate}
+\item The step relation is deterministic: if $c \step c_1$ and $c \step c_2$ then $c_1 = c_2$ (\code{Step.deterministic}). No step leaves $(\skipS, \sigma)$ (\code{skip\_stuck}).
+\item Every configuration whose statement is not $\skipS$ can step (\code{progress}).
+\item Terminating results are unique: if $\Term(s, \sigma, \sigma_1)$ and $\Term(s, \sigma, \sigma_2)$ then $\sigma_1 = \sigma_2$ (\code{Terminates.unique}).
+\item $\Div(s, \sigma)$ holds if and only if there is no $\sigma'$ with $\Term(s, \sigma, \sigma')$ (\code{diverges\_iff\_not\_terminates}); consequently every configuration either terminates or diverges (\code{terminates\_or\_diverges}).
+\item $\Div(c)$ holds if and only if $\mathit{InfiniteTrace}(c)$ (\code{diverges\_iff\_infiniteTrace}).
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Determinism is an induction on the first derivation with inversion of the second; the only cases needing an argument are the two sequencing rules, which are separated by the fact that $\skipS$ is stuck, and the two conditional rules, separated by the guard value. Progress is a structural induction on the statement. Uniqueness is an induction on the first execution: at each step the second execution cannot have stopped, since $\skipS$ is stuck, so its first step coincides by determinism. For item~4, if $c$ diverges and terminates in $k$ steps then an execution of length $k+1$ exists and by step-indexed determinism its first $k$ steps reach $(\skipS, \sigma')$, which cannot step. Conversely, if $c$ does not terminate then by induction on $n$ an execution of length $n$ ending in a configuration that is not $\skipS$ can be extended by progress. Item~5 from left to right uses classical choice to select, for each $n$, the configuration at distance $n$; step-indexed determinism shows that consecutive selections are related by a step. The converse direction is a direct induction.
+\end{proof}
+
+\subsection{Big-step semantics}
+
+The development also defines a big-step relation $\sigma \Downarrow_s \sigma'$ (\code{BigStep}) with the usual seven rules, including the two loop rules
+\begin{mathpar}
+\inferrule{\eval{e}{\sigma} = 0}{\sigma \Downarrow_{\while{e}{s}} \sigma}
+\and
+\inferrule{\eval{e}{\sigma} \neq 0 \\ \sigma \Downarrow_{s} \sigma' \\ \sigma' \Downarrow_{\while{e}{s}} \sigma''}{\sigma \Downarrow_{\while{e}{s}} \sigma''}
+\end{mathpar}
+
+\begin{theorem}[\code{bigStep\_iff\_terminates}]
+$\sigma \Downarrow_s \sigma'$ holds if and only if $\Term(s, \sigma, \sigma')$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+From big-step to small-step, induction on the derivation using transitivity and the sequencing congruence. From small-step to big-step, the key lemma \code{BigStep.of\_step} states that if $(s, \sigma) \step (s', \sigma')$ and $\sigma' \Downarrow_{s'} \sigma''$ then $\sigma \Downarrow_{s} \sigma''$; it is an induction on the step with inversion of the big-step derivation, and the loop unfolding case reassembles the two loop rules. The result follows by induction on the length of the execution.
+\end{proof}
+
+The big-step relation is a proof tool. The correctness theorem is stated using the small-step notions of Definition~\ref{def:term}, and the big-step relation is used in one of the two proofs because induction on derivations gives immediate access to the loop invariant.
+
+\subsection{Executable semantics}
+
+The step function $\mathit{stepFn} : \Stmt \to \State \to \mathit{Option}\ \Config$ gives the unique successor of a configuration, and it has been proved both sound and complete with respect to $\step$ (\code{stepFn\_iff}). The runner $\mathit{run}$, which applies it as long as fuel remains, has been proved to report only real terminating executions (\code{run\_finished\_sound}). Exhaustion of fuel is a separate outcome that carries no semantics at all. These functions are used to run the examples in the test executable; they contribute to no theorem about the optimiser.
+
+\section{Observations and free variables}
+\label{sec:observations}
+
+\begin{definition}[Agreement and observational equivalence]
+For a finite set $L$ of variables, $\Agree(L, \sigma_1, \sigma_2)$ holds when $\sigma_1(x) = \sigma_2(x)$ for every $x \in L$. Statements $s$ and $t$ are observationally equivalent with respect to $L$, written $\ObsEq(L, s, t)$, when for every initial state $\sigma$,
+\begin{align*}
+&\forall \sigma_1.\ \Term(s, \sigma, \sigma_1) \Rightarrow \exists \sigma_2.\ \Term(t, \sigma, \sigma_2) \wedge \Agree(L, \sigma_1, \sigma_2) \quad\text{and} \\
+&\forall \sigma_2.\ \Term(t, \sigma, \sigma_2) \Rightarrow \exists \sigma_1.\ \Term(s, \sigma, \sigma_1) \wedge \Agree(L, \sigma_1, \sigma_2).
+\end{align*}
+\end{definition}
+
+Agreement is an equivalence relation on states for each $L$, is antitone in $L$ and is compatible with union (\code{Agree.mono}, \code{Agree.union}). Two lemmas about updates carry the assignment cases of every later proof: agreement on $L \setminus \{x\}$ is preserved by updating $x$ to the same value on both sides (\code{Agree.update\_same\_value}), and agreement on $L$ is preserved by updating a variable outside $L$ on one side only (\code{Agree.update\_dead\_left}).
+
+Observational equivalence has the properties of reflexivity, symmetry and transitivity, and it is antitone with respect to $L$ (\code{ObsEquiv.refl}, \code{ObsEquiv.symm}, \code{ObsEquiv.trans}, \code{ObsEquiv.mono}). Because both directions require termination, equivalent programs diverge from precisely the same initial states (\code{ObsEquiv.diverges\_iff}), which follows from Theorem~\ref{thm:basic}(4). Agreement on $L$ provides no information about the variables outside $L$, which is what makes it applicable to dead store elimination, a transformation that does change the final values of unobserved variables.
+
+Free variables $\FV(e)$ of an expression are collected by structural recursion (\code{freeVars}), and $\vars(s)$ collects every variable a statement mentions (\code{Stmt.vars}).
+
+\begin{lemma}[Dependency, \code{eval\_agree}]
+\label{lem:dep}
+If $\Agree(\FV(e), \sigma_1, \sigma_2)$ then $\eval{e}{\sigma_1} = \eval{e}{\sigma_2}$.
+\end{lemma}
+
+This is the single semantic principle about expressions used throughout the rest of the development. It is applied through the corollary \code{eval\_agree\_of\_subset}: agreement on any superset of $\FV(e)$ is all it takes.
+
+\subsection{Representation of variable sets}
+
+The development does not depend on Mathlib. Finite sets of variables are represented by lists of strings (\code{VarSet}) with an insertion-based union and a filter-based removal, and every property is stated through membership and the list subset relation $\subseteq$. Two lists are set-equal, written $A \equiv B$, when $A \subseteq B$ and $B \subseteq A$ (\code{VarSet.Equiv}). All results about live sets hold up to this equivalence, and the optimiser is proved to produce syntactically equal output on set-equal inputs (Section~\ref{sec:dse}). The representation is adequate for the finite-height argument of Section~\ref{sec:fixedpoint} because the measure counts elements of a fixed universe list that are not yet members of the iterate.
+
+\section{Backwards liveness analysis}
+\label{sec:liveness}
+
+The analysis computes, for a statement $s$ and a set $L$ of variables that are live after $s$, the set $\live(s, L)$ of variables live before $s$: those whose values before $s$ may determine the values of $L$ after $s$. The transfer equations are
+\begin{align*}
+\live(\skipS, L) &= L \\
+\live(\assign{x}{e}, L) &= \begin{cases} (L \setminus \{x\}) \cup \FV(e) & x \in L \\ L & x \notin L \end{cases} \\
+\live(\seq{s_1}{s_2}, L) &= \live(s_1, \live(s_2, L)) \\
+\live(\ite{e}{s_1}{s_2}, L) &= \FV(e) \cup \live(s_1, L) \cup \live(s_2, L) \\
+\live(\while{e}{s}, L) &= \mu X.\ L \cup \FV(e) \cup \live(s, X)
+\end{align*}
+In Lean these are the function \code{liveIn} together with one rewrite lemma per case (\code{liveIn\_skip}, \code{liveIn\_assign\_live}, \code{liveIn\_assign\_dead}, \code{liveIn\_seq}, \code{liveIn\_ite}, \code{liveIn\_while}). The loop case is the least fixed point of the loop functional $F_{e,s,L}(X) = L \cup \FV(e) \cup \live(s, X)$ (\code{loopFunctional}) computed by the solver of Section~\ref{sec:fixedpoint} over the universe $U = L \cup \FV(e) \cup \vars(s)$.
+
+The definition of $\live$ and the proof that it stays inside its universe cannot be separated. The solver takes as an argument a proof that the functional maps subsets of $U$ to subsets of $U$, and for the loop functional that proof needs the bound $\live(s, X) \subseteq X \cup \vars(s)$ for the loop body, which is an instance of the property being established for $\live$ itself. The mechanisation therefore defines a function \code{liveInB} returning a dependent pair of a set and a proof of the bound $\live(s, L) \subseteq L \cup \vars(s)$, by structural recursion on $s$, and defines \code{liveIn} as its first projection. The bound is then available as \code{liveIn\_subset} and the loop case unfolds by \code{liveIn\_while}, which holds by reflexivity because the proof component is irrelevant.
+
+\begin{theorem}[Properties of the analysis, \code{Liveness/Analysis/Transfer.lean}]
+\label{thm:live}
+\leavevmode
+\begin{enumerate}
+\item $\live(s, \cdot)$ is monotone: $L_1 \subseteq L_2$ implies $\live(s, L_1) \subseteq \live(s, L_2)$ (\code{liveIn\_mono}); hence it respects set equality (\code{liveIn\_equiv}).
+\item $\live(s, L) \subseteq L \cup \vars(s)$ (\code{liveIn\_subset}).
+\item The loop functional $F_{e,s,L}$ is monotone (\code{loopFunctional\_mono}) and bounded by $U$ (\code{loopFunctional\_bounded}).
+\item For $X = \live(\while{e}{s}, L)$: $L \cup \FV(e) \cup \live(s, X) \subseteq X$ (\code{liveIn\_while\_postfixed}), $X \equiv L \cup \FV(e) \cup \live(s, X)$ (\code{liveIn\_while\_fixed}), and $X \subseteq Y$ for every $Y$ with $L \cup \FV(e) \cup \live(s, Y) \subseteq Y$ (\code{liveIn\_while\_least}). The three projections $L \subseteq X$, $\FV(e) \subseteq X$ and $\live(s, X) \subseteq X$ are the facts the correctness proofs use (\code{liveIn\_while\_out}, \code{liveIn\_while\_cond}, \code{liveIn\_while\_body}).
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Monotonicity is a structural induction on $s$. The assignment case splits on membership of $x$ in each set; the one nontrivial subcase is $x \notin L_1$ and $x \in L_2$, where $L_1 \subseteq (L_2 \setminus \{x\}) \cup \FV(e)$ because every element of $L_1$ differs from $x$. The loop case uses monotonicity of the least fixed point operator in its functional (Theorem~\ref{thm:lfp}(5)) together with the induction hypothesis for the body. Item~4 is the specialisation of Theorem~\ref{thm:lfp} to the loop functional.
+\end{proof}
+
+\begin{theorem}[Soundness, \code{liveness\_sound}]
+\label{thm:sound}
+If $\Agree(\live(s, L), \sigma_1, \sigma_2)$, $\sigma_1 \Downarrow_s \sigma_1'$ and $\sigma_2 \Downarrow_s \sigma_2'$, then $\Agree(L, \sigma_1', \sigma_2')$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Induction on the first derivation, generalising $L$ and the second run. For a live assignment the right-hand sides evaluate equally by Lemma~\ref{lem:dep} because $\FV(e) \subseteq \live$, and agreement on $L \setminus \{x\}$ lifts through the update. For a dead assignment both updates are to a variable outside $L$. Sequencing threads $\live(s_2, L)$ as the intermediate set. Conditionals evaluate the guard equally because $\FV(e) \subseteq \live$, so both derivations use the same branch. For a loop with fixed point $X = \live(\while{e}{s}, L)$, the hypothesis is agreement on $X$; the guards agree because $\FV(e) \subseteq X$; the body hypothesis applies with live-out $X$ because $\live(s, X) \subseteq X$ and yields agreement on $X$ after the body; and the loop hypothesis, applied with the same $L$, closes the case. In the exit case agreement on $L$ follows from $L \subseteq X$.
+\end{proof}
+
+Theorem~\ref{thm:sound} is the formal statement behind the phrase that liveness is a backwards approximation of a forwards dependency. It does not mention the optimiser; Section~\ref{sec:preservation} applies the same proof structure to the correspondence between a program and its optimised version.
+
+\section{Finite fixed-point computation}
+\label{sec:fixedpoint}
+
+Let $U$ be a list of variables and $F$ a function on variable sets that is bounded by $U$, meaning $X \subseteq U$ implies $F(X) \subseteq U$ (\code{Bounded}). A set $X$ is a post-fixed point of $F$ when $F(X) \subseteq X$ (\code{PostFixed}). The solver is the function
+\[
+\mathit{iterate}(U, F, X) =
+\begin{cases}
+X & F(X) \subseteq X \\
+\mathit{iterate}(U, F, X \cup F(X)) & \text{otherwise}
+\end{cases}
+\qquad
+\lfp(U, F) = \mathit{iterate}(U, F, \emptyset)
+\]
+where the Lean function \code{iterate} additionally takes the proof that $F$ is bounded by $U$ and a proof that $X \subseteq U$, and the recursive call supplies the proof that $X \cup F(X) \subseteq U$. The test $F(X) \subseteq X$ is decidable for lists of strings, so the function is executable.
+
+\begin{theorem}[Termination]
+\label{thm:termination}
+The recursion terminates. The measure is the number of elements of $U$ that are not members of $X$, written $\mathit{deficit}(U, X)$ (\code{VarSet.deficit}). When $F(X) \not\subseteq X$ there is some $v \in F(X)$ with $v \notin X$; since $F(X) \subseteq U$, $v$ is an element of $U$ that is in $X \cup F(X)$ but not in $X$, and since $X \subseteq X \cup F(X)$ every element of $U$ outside $X \cup F(X)$ is outside $X$, so the deficit strictly decreases (\code{VarSet.deficit\_lt}).
+\end{theorem}
+
+Lean's termination checker accepts the well-founded recursion with this measure, and the proof that the measure decreases is given explicitly in the definition. There is no limit on iterations, and there is no branch that produces an unverified output once a limit is exceeded: the function is total because its preconditions guarantee that the measure decreases.
+
+\begin{theorem}[Fixed point, \code{Liveness/Analysis/FixedPoint.lean}]
+\label{thm:lfp}
+Let $F$ be bounded by $U$.
+\begin{enumerate}
+\item $F(\lfp(U, F)) \subseteq \lfp(U, F)$ (\code{lfp\_postfixed}).
+\item $\lfp(U, F) \subseteq U$ (\code{lfp\_subset\_universe}).
+\item If $F$ is monotone then $\lfp(U, F) \subseteq Y$ for every post-fixed point $Y$ of $F$ (\code{lfp\_least}).
+\item If $F$ is monotone then $\lfp(U, F) \subseteq F(\lfp(U, F))$, so $F(\lfp(U, F)) \equiv \lfp(U, F)$ (\code{lfp\_prefixed}, \code{lfp\_fixed}).
+\item If $F$ is monotone and $F(X) \subseteq F'(X)$ for all $X$, where $F'$ is bounded by some $U'$, then $\lfp(U, F) \subseteq \lfp(U', F')$ (\code{lfp\_mono}).
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Items 1 and 2 are proved for every starting set $X \subseteq U$ by the functional induction principle generated for \code{iterate}: in the base case $F(X) \subseteq X$ holds by the test, and in the step case the induction hypothesis applies to $X \cup F(X)$. Item~3 is proved in the generalised form that if every post-fixed point $Y$ contains the starting set $X$ then every post-fixed point contains the result; the step case shows $X \cup F(X) \subseteq Y$ from $X \subseteq Y$, monotonicity and $F(Y) \subseteq Y$. Item~4 applies item~3 to $Y = F(\lfp)$, which is post-fixed by monotonicity applied to item~1. Item~5 applies item~3 to $Y = \lfp(U', F')$, which is post-fixed for $F$ because $F(Y) \subseteq F'(Y) \subseteq Y$.
+\end{proof}
+
+The result is the least fixed point in the sense of Tarski \cite{Tarski1955} restricted to the finite lattice of subsets of $U$, obtained by the ascending Kleene iteration that underlies iterative dataflow analysis \cite{Kildall1973,KamUllman1977} and abstract interpretation \cite{CousotCousot1977}. The iteration starts from the empty set and adds $F(X)$ at each step. For a monotone $F$ the iterates are exactly $F^n(\emptyset)$, but the proof does not need this; it needs only that the result is post-fixed, lies below every post-fixed point and lies inside $U$. Leastness is what makes the analysis precise rather than merely sound: any post-fixed point would make the correctness theorem go through, but a larger one would retain more stores. In particular the whole universe $U$ is a post-fixed point, and choosing it would turn the loop case into a transformation that eliminates nothing inside loops.
+
+\section{Dead store elimination}
+\label{sec:dse}
+
+The transformation is the function $\mathit{dse} : \Stmt \to \mathcal{P}(\mathit{Var}) \to \Stmt \times \mathcal{P}(\mathit{Var})$ that returns the optimised statement together with its live-in set:
+\begin{align*}
+\mathit{dse}(\skipS, L) &= (\skipS, L) \\
+\mathit{dse}(\assign{x}{e}, L) &= \begin{cases} (\assign{x}{e},\ (L \setminus \{x\}) \cup \FV(e)) & x \in L \\ (\skipS,\ L) & x \notin L \end{cases} \\
+\mathit{dse}(\seq{s_1}{s_2}, L) &= (\seq{t_1}{t_2},\ L_1) \\
+&\qquad\text{where } (t_2, L_2) = \mathit{dse}(s_2, L) \text{ and } (t_1, L_1) = \mathit{dse}(s_1, L_2) \\
+\mathit{dse}(\ite{e}{s_1}{s_2}, L) &= (\ite{e}{t_1}{t_2},\ \FV(e) \cup L_1 \cup L_2) \\
+&\qquad\text{where } (t_1, L_1) = \mathit{dse}(s_1, L) \text{ and } (t_2, L_2) = \mathit{dse}(s_2, L) \\
+\mathit{dse}(\while{e}{s}, L) &= (\while{e}{t},\ X) \\
+&\qquad\text{where } X = \live(\while{e}{s}, L) \text{ and } (t, \_) = \mathit{dse}(s, X)
+\end{align*}
+We write $\opt(s, L)$ for the first component (\code{optimise}). The second component is proved equal to $\live(s, L)$ (\code{dse\_liveIn}), so the transformation and the analysis agree at every point, and the equations for $\opt$ are available as rewrite lemmas (\code{optimise\_skip}, \code{optimise\_assign\_live}, \code{optimise\_assign\_dead}, \code{optimise\_seq}, \code{optimise\_ite}, \code{optimise\_while}). In the loop case the body is optimised against the fixed point $X$, which is the set live at the head of the loop on every iteration.
+
+\begin{theorem}[Structural properties, \code{Liveness/Optimisation/DSE.lean}]
+\leavevmode
+\begin{enumerate}
+\item $\vars(\opt(s, L)) \subseteq \vars(s)$ (\code{optimise\_vars\_subset}).
+\item The size of $\opt(s, L)$ is at most the size of $s$ (\code{optimise\_size\_le}).
+\item If $L_1 \equiv L_2$ then $\opt(s, L_1) = \opt(s, L_2)$ (\code{optimise\_congr}).
+\end{enumerate}
+\end{theorem}
+
+Determinism of the transformation is immediate because it is a total function; item~3 gives the exact formulation of that statement for the list representation, saying that the output is determined only by the set denoted by the input.
+
+\begin{theorem}[Idempotence, \code{Liveness/Optimisation/Idempotence.lean}]
+\label{thm:idem}
+For all $Y \subseteq X$, $\live(\opt(s, X), Y) \equiv \live(s, Y)$ (\code{liveIn\_optimise}) and $\opt(\opt(s, X), Y) = \opt(s, Y)$ (\code{optimise\_optimise}). In particular $\opt(\opt(s, L), L) = \opt(s, L)$ (\code{optimise\_idem}).
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Both statements are structural inductions on $s$, the second using the first. The side condition $Y \subseteq X$ is needed: an assignment removed as dead for $X$ is still dead for the smaller $Y$, but could be live for a larger set. In the sequencing case the induction hypothesis for $s_1$ is instantiated at $\live(s_2, X)$ and $\live(s_2, Y)$, which are in the subset relation by monotonicity. In the loop case let $\hat X = \live(\while{e}{s}, X)$ and $\hat Y = \live(\while{e}{s}, Y)$, so $\hat Y \subseteq \hat X$ by monotonicity, and let $t = \opt(s, \hat X)$. The fixed point $Y'$ for the loop $\while{e}{t}$ at $Y$ is below $\hat Y$ because $\hat Y$ is post-fixed for the functional of $t$: by the induction hypothesis at $\hat Y \subseteq \hat X$, $\live(t, \hat Y) \equiv \live(s, \hat Y) \subseteq \hat Y$. Conversely $Y' \subseteq \hat X$, so the induction hypothesis at $Y'$ gives $\live(s, Y') \equiv \live(t, Y') \subseteq Y'$, making $Y'$ post-fixed for the functional of $s$, and leastness gives $\hat Y \subseteq Y'$. The statement about $\opt$ then follows by rewriting the live set with \code{optimise\_congr}.
+\end{proof}
+
+\section{Semantic preservation}
+\label{sec:preservation}
+
+\begin{theorem}[Correctness, \code{dse\_correct}]
+\label{thm:main}
+For every statement $s$ and observation set $L$, $\ObsEq(L, s, \opt(s, L))$.
+\end{theorem}
+
+By the properties of $\ObsEq$ this yields the corollaries that $s$ and $\opt(s, L)$ terminate from the same initial states (\code{dse\_preserves\_termination}), diverge from the same initial states (\code{dse\_preserves\_divergence}), and, when both terminate from a common initial state, end in states agreeing on $L$ (\code{dse\_final\_agree}).
+
+Both proofs of Theorem~\ref{thm:main} can be found in the artefact. The first, in \code{Liveness/\allowbreak Optimisation/\allowbreak Correctness.lean}, goes through the big-step relation and proceeds constructor by constructor. The second, in \code{Liveness/\allowbreak Simulation/}, uses the small-step semantics and separates out the pieces needed to keep divergence across the transformation.
+
+\subsection{Proof by induction on derivations}
+
+The theorem is proved as a corollary of a proposition in which the two initial states agree on the live-in set, rather than being the same state. This modification is needed because, when the proof proceeds through a sequence $\seq{s_1}{s_2}$, the states after $s_1$ on the two sides no longer match, although they still agree on $\live(s_2, L)$.
+
+\begin{lemma}[\code{dse\_bigStep\_forward}]
+If $\sigma_1 \Downarrow_s \sigma_1'$ and $\Agree(\live(s, L), \sigma_1, \sigma_2)$ then there is $\sigma_2'$ with $\sigma_2 \Downarrow_{\opt(s, L)} \sigma_2'$ and $\Agree(L, \sigma_1', \sigma_2')$.
+\end{lemma}
+
+\begin{lemma}[\code{dse\_bigStep\_backward}]
+Suppose $\sigma_2 \Downarrow_t \sigma_2'$ with $t = \opt(s, L)$. If $\Agree(\live(s, L), \sigma_1, \sigma_2)$ then there is $\sigma_1'$ with $\sigma_1 \Downarrow_s \sigma_1'$ and $\Agree(L, \sigma_1', \sigma_2')$.
+\end{lemma}
+
+\begin{proof}[Proof sketch]
+The forward lemma is an induction on the source derivation generalising $L$ and $\sigma_2$, with the same case analysis as Theorem~\ref{thm:sound} except that the target derivation is constructed rather than inverted. For a dead assignment the target statement is $\skipS$, the target state is unchanged, and the source update is to a variable outside $L$. The loop case uses the fixed point $X = \live(\while{e}{s}, L)$ as the invariant exactly as before, with the body hypothesis at live-out $X$ and the loop hypothesis at $L$.
+
+The backward lemma is an induction on the target derivation generalising $s$, $L$ and $\sigma_1$, with the hypothesis $t = \opt(s, L)$ carried explicitly because the target statement is not syntactically a constructor application. In each case the proof inspects $s$ and uses the rewrite lemmas for $\opt$ to discover which source constructors can produce the observed target constructor: a target $\skipS$ comes either from a source $\skipS$ or from a dead assignment, a target assignment comes only from a live assignment with the same variable and expression, and compound target statements come only from the corresponding source constructor with optimised components. The loop case feeds the hypothesis $t = \opt(\while{e}{s}, L)$ back into the inner loop hypothesis unchanged, because the optimised loop is its own continuation.
+\end{proof}
+
+Theorem~\ref{thm:main} results from applying both lemmas with $\sigma_1 = \sigma_2$, for which agreement on any set is immediate, and translating between termination and big-step derivations.
+
+\subsection{Proof by simulation}
+
+A forward simulation associates source and target configurations through an invariant that is preserved by every source step. For dead store elimination the obvious invariant is that the target statement is the optimisation of the current source statement relative to the fixed observation set, and that the two states agree on the live-in set of the current source statement:
+\[
+\Match_L((s, \sigma_1), (t, \sigma_2)) :\Leftrightarrow t = \opt(s, L) \wedge \Agree(\live(s, L), \sigma_1, \sigma_2).
+\]
+This is \code{Match} in \code{Liveness/Simulation/Relation.lean}. The observation set $L$ never changes during the computation; it is the residual statement $s$ that changes, and the live-in set of the residual is the agreement set at that point.
+
+\begin{lemma}[Step simulation, \code{step\_simulation}]
+\label{lem:sim}
+If $\Match_L(c_1, c_2)$ and $c_1 \step c_1'$, then there is $c_2'$ with $\Match_L(c_1', c_2')$ such that either $c_2 \step c_2'$, or $c_2' = c_2$ and the statement of $c_1'$ is strictly smaller than the statement of $c_1$.
+\end{lemma}
+
+\begin{proof}[Proof sketch]
+Induction on the source step, generalising $L$ and $c_2$. A live assignment is matched by the same assignment on the target, with equal right-hand sides by Lemma~\ref{lem:dep}, and the two updated states agree on $L = \live(\skipS, L)$. A dead assignment is matched by no target step: the target statement is already $\skipS$, and the source update is to a variable outside $L$; the size of $\skipS$ is zero and the size of an assignment is one, so the measure decreases. The rule $\seq{\skipS}{s} \step s$ is matched by the same rule because $\opt(\skipS, \cdot) = \skipS$. The congruence rule for sequencing applies the induction hypothesis to the first component with live-out $\live(s_2, L)$ and lifts the result, including the size decrease, to the sequence. Conditionals evaluate their guards equally and are matched by the same branch rule. The loop unfolding step is matched by the loop unfolding step of the target: optimising $\ite{e}{(\seq{s}{\while{e}{s}})}{\skipS}$ against $L$ produces exactly the unfolding of $\while{e}{\opt(s, X)}$, where $X = \live(\while{e}{s}, L)$, because the sequence case optimises the loop first, obtaining live-in $X$, and then the body against $X$; and the states agree on the live-in set of the unfolded statement, $\FV(e) \cup \live(s, X) \cup L$, because each component is contained in $X$ by Theorem~\ref{thm:live}(4).
+\end{proof}
+
+The lemma has two separable characteristics. The first is that the relation is preserved by every source step with the same $L$, which shows that it is a simulation and not an unrolling of the theorem. The second is that the only stuttering source steps are eliminated assignments, and each of them decreases a natural-number measure of the source statement, while other steps may increase it (loop unfolding does). This is the well-founded stuttering condition: a source execution cannot contain infinitely many consecutive stuttering steps.
+
+\begin{theorem}[Consequences of the simulation, \code{Liveness/Simulation/Preservation.lean}]
+\label{thm:simcons}
+Let $\Match_L((s, \sigma_1), (t, \sigma_2))$.
+\begin{enumerate}
+\item If $\Term(s, \sigma_1, \sigma_1')$ then there is $\sigma_2'$ with $\Term(t, \sigma_2, \sigma_2')$ and $\Agree(L, \sigma_1', \sigma_2')$ (\code{forward\_terminates}).
+\item If $\Div(s, \sigma_1)$ then $\Div(t, \sigma_2)$ (\code{forward\_diverges}).
+\item If $\Term(t, \sigma_2, \sigma_2')$ then there is $\sigma_1'$ with $\Term(s, \sigma_1, \sigma_1')$ and $\Agree(L, \sigma_1', \sigma_2')$ (\code{backward\_terminates}).
+\end{enumerate}
+Consequently $\ObsEq(L, s, \opt(s, L))$ (\code{dse\_correct\_sim}).
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Item~1 is an induction on the source execution using Lemma~\ref{lem:sim}; at the end the source statement is $\skipS$, so the matched target statement is $\opt(\skipS, L) = \skipS$ and the agreement set is $\live(\skipS, L) = L$.
+
+Item~2 needs the stuttering measure. The lemma \code{diverges\_step\_target} states that if $c_1$ diverges and $\Match_L(c_1, c_2)$ then there is a target step $c_2 \step c_2'$ and a diverging $c_1'$ with $\Match_L(c_1', c_2')$. It is proved by well-founded recursion on the size of the statement of $c_1$: since $c_1$ diverges it can step, to some $c_1''$ which also diverges by determinism; if the matching target move is a step we are done, and if it is a stutter then $c_1''$ is smaller and matches the same $c_2$, so the recursive call applies. Item~2 then follows by induction on $n$: for every $n$ the target has an execution of length $n$, obtained by taking one target step and applying the hypothesis for $n-1$ to the new matched pair.
+
+Item~3 uses determinism. By Theorem~\ref{thm:basic}(4) the source either terminates or diverges. If it diverges then by item~2 so does the target, contradicting the assumed target termination through Theorem~\ref{thm:basic}(4) again. So the source terminates in some $\sigma_1'$, item~1 gives a target run to some $\sigma_2''$ agreeing with $\sigma_1'$ on $L$, and uniqueness of terminating results identifies $\sigma_2''$ with $\sigma_2'$.
+\end{proof}
+
+The structure of this argument shows what a one-sided forward simulation with stuttering lacks. Items 1 and 3 together provide observational equivalence, and the additional conditions enter in item~3: divergence preservation, which is item~2 and needs the measure on stuttering steps, and determinism of the target, which is used to identify the final state of a terminating target run with that of the matched run. Without the measure, the source could diverge through an infinite number of stuttering steps while the target terminates, and without determinism the target could have one run consistent with the source and another that is not. Both properties hold in this case because the language is deterministic and because eliminated assignments decrease the residual statement, and the mechanised proof uses exactly these two facts.
+
+\subsection{Examples}
+
+The artefact includes the examples from the specification as Lean definitions with their expected transformations. For loop-free programs the transformation is proved by \code{decide}, which executes the optimiser inside the kernel; for loops, whose fixed-point iteration is defined by well-founded recursion and does not reduce in the kernel, the expected transformation is checked by the test executable and the semantics are exercised by the verified interpreter. The nonterminating loop $\while{1}{(\seq{\assign{y}{y+1}}{\assign{z}{0}})}$ observed on $\{x\}$ is optimised to $\while{1}{(\seq{\skipS}{\skipS})}$, and for this program divergence of the source from every initial state is proved by an induction showing that no big-step derivation exists, and divergence of the target follows from \code{dse\_preserves\_divergence}. The loop-carried example
+\begin{verbatim}
+x := 0; y := 5; while (x - 10) do (x := x + 1; y := y + 1)
+\end{verbatim}
+observed on $\{x\}$ has loop fixed point $\{x\}$: the guard reads $x$, the body transfer at $\{x\}$ is $\{x\}$, and $y$ never enters. Both assignments to $y$ are removed and both to $x$ are kept, and the test executable confirms that source and target terminate with $x = 10$ from the zero state.
+
+\section{Mechanisation in Lean 4}
+\label{sec:mechanisation}
+
+The implementation is written for Lean \code{v4.34.0} and is independent of third-party packages. It consists of eighteen modules totalling around 1800 lines, arranged as syntax and states; semantics; variable sets; observations; free variables; the analysis in four modules (domain vocabulary, fixed point, transfer, soundness); the optimisation in three modules (transformation, correctness, idempotence); the simulation in two modules; the executable interpreter and pretty printer; and three example modules. A test executable runs the example modules and checks the observable outputs of source and target under the verified interpreter.
+
+Three choices determined the design of the mechanisation. The first is the use of lists to represent variable sets, which avoids the need for Mathlib's \code{Finset}. As a result, equalities between live sets are set equalities instead of syntactic ones, which the congruence theorem \code{optimise\_congr} covers, and in return everything in the development, including the finite-height termination argument, depends on the core library alone. The second is making the transfer function dependently typed, with $\live(s, L) \subseteq L \cup \vars(s)$ in its type, so that the loop case can discharge the boundedness condition of the solver. The third is describing divergence as the existence of executions of every length, which makes the equivalence with non-termination constructive and gives a convenient induction principle for the simulation argument; the infinite-trace variant is proved equivalent using choice.
+
+The trusted core is the Lean kernel combined with the three standard axioms. Applying \code{\#print axioms} to \code{dse\_correct}, \code{dse\_correct\_sim}, \code{dse\_preserves\_divergence}, \code{liveness\_sound}, \code{lfp\_fixed}, \code{lfp\_least} and \code{optimise\_idem} results in exactly \code{propext}, \code{Classical.choice} and \code{Quot.sound}; \code{Step.deterministic} requires no axiom at all, and the interpreter theorems rely on \code{propext} only. There is no \code{sorry}, \code{admit}, \code{native\_decide} or \code{axiom} declaration in the repository. Beyond the kernel, nothing needs to be trusted apart from the meaning of the definitions of \code{Step}, \code{Terminates}, \code{Diverges}, \code{Agree} and \code{ObsEquiv}; these five are the statements a reader has to read to verify that the theorems say what this paper claims.
+
+\section{Limitations and future work}
+\label{sec:limitations}
+
+The language is deliberately restrictive. It has no procedures, arrays, pointers or input and output, so the only visible behaviours are termination itself and the final values of a fixed set of variables. All expressions are total and affect nothing else, which is why Lemma~\ref{lem:dep} is the only semantic fact about them that the proofs need. For a language with partial operations such as division, either the semantics would have to distinguish failure from divergence, or the analysis would have to count every expression that might fail as live even when its value is unused. The observation set is constant for the whole program rather than attached to program points, which is enough for a whole-program transformation but would need generalising before the pass could be applied to procedure bodies with calling conventions.
+
+The simulation construction yields the same theorem as the derivation-based proof and is included because it exposes the divergence argument. It would also be the only viable route for a language with nondeterminism, where the backward direction of Theorem~\ref{thm:simcons} could no longer rely on determinism and would need a backward simulation of its own.
+
+The optional extension of the specification to a control flow graph with a worklist solver has not been started. The pieces that would carry over are the solver, which assumes only an arbitrary bounded monotone functional on a finite universe, and the dependency lemma. The pieces to add are a lowering from the structured language into labelled blocks together with a proof that this mapping preserves observational behaviour, liveness formulated as a set of dataflow constraints over the graph, and a proof that the worklist solution fulfils those constraints. The structured correctness theorem could then be reused only if the lowering and the transformation commute, which is itself a theorem to prove rather than a property to assume.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

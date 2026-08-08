@@ -1,0 +1,9 @@
+name = "liveness"
+defaultTargets = ["Liveness", "tests"]
+
+[[lean_lib]]
+name = "Liveness"
+
+[[lean_exe]]
+name = "tests"
+root = "Tests.Main"

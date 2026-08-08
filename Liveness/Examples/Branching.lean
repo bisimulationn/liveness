@@ -1,0 +1,32 @@
+import Liveness.Optimisation.Correctness
+import Liveness.Pretty
+
+namespace Liveness.Examples
+
+open Stmt Expr
+
+def branching : Stmt :=
+  seq (assign "x" (const 10))
+    (ite (var "c") (assign "x" (const 20)) (assign "y" (const 30)))
+
+def branchingObs : VarSet := ["x"]
+
+def branchingExpected : Stmt :=
+  seq (assign "x" (const 10)) (ite (var "c") (assign "x" (const 20)) skip)
+
+example : optimise branching branchingObs = branchingExpected := by decide
+
+example : liveIn branching branchingObs = ["c"] := by decide
+
+def branchingBothOverwrite : Stmt :=
+  seq (assign "x" (const 10))
+    (ite (var "c") (assign "x" (const 20)) (assign "x" (const 30)))
+
+example : optimise branchingBothOverwrite ["x"] =
+    seq skip (ite (var "c") (assign "x" (const 20)) (assign "x" (const 30))) := by decide
+
+theorem branching_correct : ObsEquiv branchingObs branching branchingExpected := by
+  have h := dse_correct branching branchingObs
+  rwa [show optimise branching branchingObs = branchingExpected by decide] at h
+
+end Liveness.Examples
