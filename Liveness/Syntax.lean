@@ -5,6 +5,9 @@ inductive Expr where
   | var : String → Expr
   | add : Expr → Expr → Expr
   | sub : Expr → Expr → Expr
+  | mul : Expr → Expr → Expr
+  | lt : Expr → Expr → Expr
+  | eq : Expr → Expr → Expr
   deriving Repr, DecidableEq
 
 inductive Stmt where

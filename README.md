@@ -4,7 +4,7 @@ A dead store elimination pass for a small imperative language, implemented and v
 
 ## Semantics
 
-Expressions are integer constants, variables, `+` and `-`, and statements are `skip`, assignment, sequencing, `ite` and `while`. States are total functions `String → Int`, so evaluation is total and effect free, and conditionals treat zero as false and anything else as true. The small step relation `Step` on `Stmt × State` has six rules, with `while e s` unfolding to `ite e (s; while e s) skip`, and termination and divergence are defined over its closures without fuel:
+Expressions are integer constants, variables, `+`, `-`, `*`, `<` and `=`, where a comparison evaluates to `1` when it holds and to `0` otherwise, and statements are `skip`, assignment, sequencing, `ite` and `while`. States are total functions `String → Int`, so evaluation is total and effect free, and conditionals treat zero as false and anything else as true. The small step relation `Step` on `Stmt × State` has six rules, with `while e s` unfolding to `ite e (s; while e s) skip`, and termination and divergence are defined over its closures without fuel:
 
 ```
 Terminates s σ σ' := Steps (s, σ) (.skip, σ')

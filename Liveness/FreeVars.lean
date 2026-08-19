@@ -7,6 +7,9 @@ def freeVars : Expr → VarSet
   | .var x => [x]
   | .add e₁ e₂ => freeVars e₁ ∪ freeVars e₂
   | .sub e₁ e₂ => freeVars e₁ ∪ freeVars e₂
+  | .mul e₁ e₂ => freeVars e₁ ∪ freeVars e₂
+  | .lt e₁ e₂ => freeVars e₁ ∪ freeVars e₂
+  | .eq e₁ e₂ => freeVars e₁ ∪ freeVars e₂
 
 theorem eval_agree {e : Expr} {σ₁ σ₂ : State} (h : Agree (freeVars e) σ₁ σ₂) :
     eval σ₁ e = eval σ₂ e := by
@@ -17,6 +20,15 @@ theorem eval_agree {e : Expr} {σ₁ σ₂ : State} (h : Agree (freeVars e) σ�
     simp only [eval]
     rw [ih₁ h.union_left, ih₂ h.union_right]
   | sub e₁ e₂ ih₁ ih₂ =>
+    simp only [eval]
+    rw [ih₁ h.union_left, ih₂ h.union_right]
+  | mul e₁ e₂ ih₁ ih₂ =>
+    simp only [eval]
+    rw [ih₁ h.union_left, ih₂ h.union_right]
+  | lt e₁ e₂ ih₁ ih₂ =>
+    simp only [eval]
+    rw [ih₁ h.union_left, ih₂ h.union_right]
+  | eq e₁ e₂ ih₁ ih₂ =>
     simp only [eval]
     rw [ih₁ h.union_left, ih₂ h.union_right]
 

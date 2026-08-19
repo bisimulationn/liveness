@@ -7,7 +7,7 @@ open Liveness Liveness.Examples
 
 def zeroState : State := fun _ => 0
 
-def initial : State := (zeroState.update "c" 1).update "a" 4
+def initial : State := (((zeroState.update "c" 1).update "a" 4).update "b" 9).update "n" 5
 
 def observe (L : VarSet) (σ : State) : List (String × Int) := L.map fun x => (x, σ x)
 
@@ -33,6 +33,10 @@ def cases : List Case :=
       expected := expressionDeps, expectedLiveIn := ["a"] },
     { name := "branch-sensitive liveness", program := branching, observed := branchingObs,
       expected := branchingExpected, expectedLiveIn := ["c"] },
+    { name := "comparison guard", program := comparisonGuard, observed := comparisonGuardObs,
+      expected := comparisonGuardExpected, expectedLiveIn := ["a", "b"] },
+    { name := "squares under a comparison loop", program := countdown, observed := countdownObs,
+      expected := countdownExpected, expectedLiveIn := ["n"] },
     { name := "loop-carried dependency", program := loopCarried, observed := loopCarriedObs,
       expected := loopCarriedExpected, expectedLiveIn := [] },
     { name := "loop body dependency", program := loopDependency, observed := loopDependencyObs,

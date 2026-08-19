@@ -74,10 +74,10 @@ Throughout this paper the names of Lean declarations are given in typewriter fon
 
 Expressions and statements are the inductive types
 \begin{align*}
-e \in \Expr &::= n \mid x \mid e_1 + e_2 \mid e_1 - e_2 \\
+e \in \Expr &::= n \mid x \mid e_1 + e_2 \mid e_1 - e_2 \mid e_1 * e_2 \mid e_1 < e_2 \mid e_1 = e_2 \\
 s \in \Stmt &::= \skipS \mid \assign{x}{e} \mid \seq{s_1}{s_2} \mid \ite{e}{s_1}{s_2} \mid \while{e}{s}
 \end{align*}
-where $n$ ranges over the integers and $x$ over strings (\code{Liveness.Expr}, \code{Liveness.Stmt}). A state $\sigma \in \State$ is a total function from strings to integers, and $\sigma[x \mapsto v]$ is the update that returns $v$ at $x$ and $\sigma(y)$ at $y \neq x$ (\code{State.update}, with the lookup lemmas \code{update\_same} and \code{update\_other}). Expression evaluation $\eval{e}{\sigma}$ is a total function defined by structural recursion (\code{eval}). Expressions have no side effects and cannot fail, so there is no exception or error state anywhere in the language.
+where $n$ ranges over the integers and $x$ over strings (\code{Liveness.Expr}, \code{Liveness.Stmt}). A state $\sigma \in \State$ is a total function from strings to integers, and $\sigma[x \mapsto v]$ is the update that returns $v$ at $x$ and $\sigma(y)$ at $y \neq x$ (\code{State.update}, with the lookup lemmas \code{update\_same} and \code{update\_other}). Expression evaluation $\eval{e}{\sigma}$ is a total function defined by structural recursion (\code{eval}), and a comparison evaluates to $1$ when it holds and to $0$ otherwise. Expressions have no side effects and cannot fail, so there is no exception or error state anywhere in the language.
 
 Conditionals and loops evaluate the integer $0$ as false and any nonzero integer as true. This is the only adherence to a truth encoding in the development, and it appears only in the inference rules for conditionals.
 

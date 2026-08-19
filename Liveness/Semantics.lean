@@ -8,6 +8,9 @@ def eval (σ : State) : Expr → Int
   | .var x => σ x
   | .add e₁ e₂ => eval σ e₁ + eval σ e₂
   | .sub e₁ e₂ => eval σ e₁ - eval σ e₂
+  | .mul e₁ e₂ => eval σ e₁ * eval σ e₂
+  | .lt e₁ e₂ => if eval σ e₁ < eval σ e₂ then 1 else 0
+  | .eq e₁ e₂ => if eval σ e₁ = eval σ e₂ then 1 else 0
 
 abbrev Config := Stmt × State
 

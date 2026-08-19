@@ -21,6 +21,23 @@ def loopCarriedExpected : Stmt :=
       («while» (sub (var "x") (const 10))
         (seq (assign "x" (add (var "x") (const 1))) skip)))
 
+def countdown : Stmt :=
+  seq (assign "i" (const 0))
+    (seq (assign "acc" (const 0))
+      («while» (lt (var "i") (var "n"))
+        (seq (assign "acc" (add (var "acc") (mul (var "i") (var "i"))))
+          (seq (assign "i" (add (var "i") (const 1)))
+            (assign "dbg" (var "acc"))))))
+
+def countdownObs : VarSet := ["acc"]
+
+def countdownExpected : Stmt :=
+  seq (assign "i" (const 0))
+    (seq (assign "acc" (const 0))
+      («while» (lt (var "i") (var "n"))
+        (seq (assign "acc" (add (var "acc") (mul (var "i") (var "i"))))
+          (seq (assign "i" (add (var "i") (const 1))) skip))))
+
 def nonterminating : Stmt :=
   «while» (const 1) (seq (assign "y" (add (var "y") (const 1))) (assign "z" (const 0)))
 

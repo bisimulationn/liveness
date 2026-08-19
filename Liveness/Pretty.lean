@@ -9,6 +9,9 @@ def pretty : Expr → String
   | var x => x
   | add e₁ e₂ => "(" ++ e₁.pretty ++ " + " ++ e₂.pretty ++ ")"
   | sub e₁ e₂ => "(" ++ e₁.pretty ++ " - " ++ e₂.pretty ++ ")"
+  | mul e₁ e₂ => "(" ++ e₁.pretty ++ " * " ++ e₂.pretty ++ ")"
+  | lt e₁ e₂ => "(" ++ e₁.pretty ++ " < " ++ e₂.pretty ++ ")"
+  | eq e₁ e₂ => "(" ++ e₁.pretty ++ " = " ++ e₂.pretty ++ ")"
 
 end Expr
 
