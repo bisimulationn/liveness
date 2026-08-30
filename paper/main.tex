@@ -147,7 +147,7 @@ The big-step relation is a proof tool. The correctness theorem is stated using t
 
 \subsection{Executable semantics}
 
-The step function $\mathit{stepFn} : \Stmt \to \State \to \mathit{Option}\ \Config$ gives the unique successor of a configuration, and it has been proved both sound and complete with respect to $\step$ (\code{stepFn\_iff}). The runner $\mathit{run}$, which applies it as long as fuel remains, has been proved to report only real terminating executions (\code{run\_finished\_sound}). Exhaustion of fuel is a separate outcome that carries no semantics at all. These functions are used to run the examples in the test executable; they contribute to no theorem about the optimiser.
+The step function $\mathit{stepFn} : \Stmt \to \State \to \mathit{Option}\ \Config$ gives the unique successor of a configuration, and it has been proved both sound and complete with respect to $\step$ (\code{stepFn\_iff}). The runner $\mathit{run}$, which applies it as long as fuel remains, has been proved to report only real terminating executions (\code{run\_finished\_sound}) and to report every terminating execution once the fuel reaches the length of its step sequence (\code{run\_complete}), so a program terminates from $\sigma$ exactly when some fuel makes the runner finish (\code{run\_finished\_iff}), and a diverging program exhausts every fuel (\code{run\_outOfFuel\_of\_diverges}). These functions are used to run the examples in the test executable; they contribute to no theorem about the optimiser.
 
 \section{Observations and free variables}
 \label{sec:observations}

@@ -88,4 +88,44 @@ theorem run_finished_sound {n : Nat} {s : Stmt} {σ σ' : State} (h : run n s σ
         exact Steps.step (stepFn_sound hc) (ih h)
       · cases h
 
+theorem run_skip (n : Nat) (σ : State) : run n .skip σ = .finished σ := by
+  cases n <;> rfl
+
+theorem run_complete {n : Nat} {s : Stmt} {σ σ' : State} (h : StepsN n (s, σ) (.skip, σ')) :
+    ∀ m, n ≤ m → run m s σ = .finished σ' := by
+  generalize hc : (s, σ) = c at h
+  generalize hd : (Stmt.skip, σ') = d at h
+  induction h generalizing s σ with
+  | zero => cases hc; cases hd; intro m _; exact run_skip m _
+  | succ h₁ _ ih =>
+    cases hc
+    rename_i c₂ _
+    obtain ⟨s₂, σ₂⟩ := c₂
+    intro m hm
+    obtain ⟨m', rfl⟩ : ∃ m', m = m' + 1 := ⟨m - 1, by omega⟩
+    have hne : s ≠ .skip := by
+      rintro rfl
+      exact skip_stuck h₁
+    have hstep := stepFn_complete h₁
+    cases s with
+    | skip => exact absurd rfl hne
+    | _ =>
+      simp only [run, hstep]
+      exact ih rfl hd m' (by omega)
+
+theorem run_finished_of_terminates {s : Stmt} {σ σ' : State} (h : Terminates s σ σ') :
+    ∃ n, run n s σ = .finished σ' := by
+  obtain ⟨n, hn⟩ := Steps.exists_stepsN h
+  exact ⟨n, run_complete hn n (Nat.le_refl n)⟩
+
+theorem run_finished_iff (s : Stmt) (σ σ' : State) :
+    (∃ n, run n s σ = .finished σ') ↔ Terminates s σ σ' :=
+  ⟨fun ⟨_, h⟩ => run_finished_sound h, run_finished_of_terminates⟩
+
+theorem run_outOfFuel_of_diverges {s : Stmt} {σ : State} (hd : Diverges (s, σ)) (n : Nat) :
+    ∃ c, run n s σ = .outOfFuel c := by
+  cases h : run n s σ with
+  | finished σ' => exact absurd (run_finished_sound h) hd.not_terminates
+  | outOfFuel c => exact ⟨c, rfl⟩
+
 end Liveness

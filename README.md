@@ -11,7 +11,7 @@ Terminates s σ σ' := Steps (s, σ) (.skip, σ')
 Diverges c        := ∀ n, ∃ c', StepsN n c c'
 ```
 
-The relation is deterministic, every configuration other than `skip` can step, terminating results are unique, and a configuration diverges exactly when it does not terminate, which coincides with having an infinite trace. A big step relation used only inside proofs is shown equivalent to termination, and the executable interpreter in `Interp.lean` is proved sound against `Step`.
+The relation is deterministic, every configuration other than `skip` can step, terminating results are unique, and a configuration diverges exactly when it does not terminate, which coincides with having an infinite trace. A big step relation used only inside proofs is shown equivalent to termination, and the executable interpreter in `Interp.lean` is proved sound and complete against `Step`, so the fuelled runner reports a final state exactly for the terminating programs once the fuel reaches the length of their run, and reports exhaustion at every fuel for the diverging ones.
 
 Two states agree on `L` when they coincide on every variable in `L`, and two programs are observationally equivalent when every terminating run of either is matched by a terminating run of the other with agreeing final states:
 
