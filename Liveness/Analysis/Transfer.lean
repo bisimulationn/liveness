@@ -140,6 +140,12 @@ theorem liveIn_while_body (e : Expr) (s : Stmt) (L : VarSet) :
     liveIn s (liveIn (.while e s) L) ⊆ liveIn (.while e s) L :=
   List.Subset.trans (subset_union_right _ _) (liveIn_while_postfixed e s L)
 
+theorem liveIn_while_equiv_of (e : Expr) (s : Stmt) (L : VarSet) {Y : VarSet}
+    (hY : L ∪ freeVars e ∪ liveIn s Y ⊆ Y) (hle : Y ⊆ L ∪ freeVars e) :
+    Equiv (liveIn (.while e s) L) Y :=
+  ⟨liveIn_while_least e s L hY,
+    List.Subset.trans hle (union_subset (liveIn_while_out e s L) (liveIn_while_cond e s L))⟩
+
 theorem liveIn_equiv {s : Stmt} {L₁ L₂ : VarSet} (h : Equiv L₁ L₂) :
     Equiv (liveIn s L₁) (liveIn s L₂) :=
   ⟨liveIn_mono s _ _ h.1, liveIn_mono s _ _ h.2⟩
