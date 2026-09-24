@@ -11,6 +11,7 @@ import Liveness.Analysis.Soundness
 import Liveness.Optimisation.DSE
 import Liveness.Optimisation.Correctness
 import Liveness.Optimisation.Idempotence
+import Liveness.Optimisation.Compact
 import Liveness.Simulation.Relation
 import Liveness.Simulation.Preservation
 import Liveness.Interp

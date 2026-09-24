@@ -40,7 +40,7 @@ The fixed point is computed by Kleene iteration from `∅` over the finite unive
 
 ## Transformation
 
-`dse s L` returns the optimised statement together with its live-in set, which is proved equal to `liveIn s L`. Dead assignments become `skip`, sequencing threads the live-in set of the second statement into the first, both branches of a conditional share the live-out set, and loop bodies are optimised against the fixed point `X`. The output mentions no new variables, is never larger than the input, and is idempotent in the form `optimise (optimise s X) Y = optimise s Y` for `Y ⊆ X`.
+`dse s L` returns the optimised statement together with its live-in set, which is proved equal to `liveIn s L`. Dead assignments become `skip`, sequencing threads the live-in set of the second statement into the first, both branches of a conditional share the live-out set, and loop bodies are optimised against the fixed point `X`. The output mentions no new variables, is never larger than the input, and is idempotent in the form `optimise (optimise s X) Y = optimise s Y` for `Y ⊆ X`. Eliminated stores leave `skip` residue inside sequences, so `compact` folds `skip; t` and `t; skip` to `t` recursively through branches and loop bodies, and `optimiseCompact s L` is `compact (optimise s L)`. Compaction preserves big step derivations in both directions, so it is observationally equivalent on every observation set, and the composed pass inherits the variable and size bounds.
 
 ## Correctness
 

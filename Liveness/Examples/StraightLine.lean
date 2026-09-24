@@ -1,4 +1,5 @@
 import Liveness.Optimisation.Correctness
+import Liveness.Optimisation.Compact
 import Liveness.Pretty
 
 namespace Liveness.Examples
@@ -30,6 +31,10 @@ def overwrittenChain : Stmt :=
   seq (assign "t" (const 1)) (seq (assign "x" (var "t")) (assign "x" (const 5)))
 
 example : optimise overwrittenChain ["x"] = seq skip (seq skip (assign "x" (const 5))) := by decide
+
+example : optimiseCompact straightLine straightLineObs = assign "x" (const 30) := by decide
+
+example : optimiseCompact overwrittenChain ["x"] = assign "x" (const 5) := by decide
 
 theorem straightLine_correct : ObsEquiv straightLineObs straightLine straightLineExpected := by
   have h := dse_correct straightLine straightLineObs

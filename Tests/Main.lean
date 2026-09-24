@@ -58,18 +58,23 @@ def runCase (c : Case) : IO Bool := do
   let srcRun := run fuel c.program initial
   let tgtRun := run fuel target initial
   let semOk := sameObservation c.observed srcRun tgtRun
+  let compacted := compact target
+  let cmpRun := run fuel compacted initial
+  let cmpOk := sameObservation c.observed srcRun cmpRun && compacted.size ≤ target.size
   IO.println s!"== {c.name}"
   IO.println s!"observed: {c.observed}"
   IO.println "source:"
   IO.println (c.program.pretty)
   IO.println "optimised:"
   IO.println (target.pretty)
+  IO.println "compacted:"
+  IO.println (compacted.pretty)
   IO.println s!"live-in: {liveSet}"
   IO.println s!"source run: {describeOutcome c.observed srcRun}"
   IO.println s!"target run: {describeOutcome c.observed tgtRun}"
-  IO.println s!"shape {if shapeOk then "ok" else "MISMATCH"}, live-in {if liveOk then "ok" else "MISMATCH"}, observation {if semOk then "ok" else "MISMATCH"}"
+  IO.println s!"shape {if shapeOk then "ok" else "MISMATCH"}, live-in {if liveOk then "ok" else "MISMATCH"}, observation {if semOk then "ok" else "MISMATCH"}, compaction {if cmpOk then "ok" else "MISMATCH"}"
   IO.println ""
-  pure (shapeOk && liveOk && semOk)
+  pure (shapeOk && liveOk && semOk && cmpOk)
 
 def main : IO UInt32 := do
   let results ← cases.mapM runCase

@@ -285,6 +285,8 @@ We write $\opt(s, L)$ for the first component (\code{optimise}). The second comp
 
 Determinism of the transformation is immediate because it is a total function; item~3 gives the exact formulation of that statement for the list representation, saying that the output is determined only by the set denoted by the input.
 
+Eliminated stores leave $\skipS$ residue inside sequences. The function $\mathit{compact}$ (\code{Liveness/Optimisation/Compact.lean}) folds $\seq{\skipS}{t}$ and $\seq{t}{\skipS}$ to $t$, recursively through branches and loop bodies, and $\mathit{optimiseCompact}(s, L) = \mathit{compact}(\opt(s, L))$. Compaction preserves big-step derivations in both directions (\code{compact\_bigStep\_iff}), the loop case by an induction on the derivation that replaces the body with any statement admitting the same derivations, so it is observationally equivalent to its input on every observation set (\code{compact\_obsEquiv}), and the composed pass is correct by transitivity (\code{optimiseCompact\_correct}) and inherits the bounds on variables and size.
+
 \begin{theorem}[Idempotence, \code{Liveness/Optimisation/Idempotence.lean}]
 \label{thm:idem}
 For all $Y \subseteq X$, $\live(\opt(s, X), Y) \equiv \live(s, Y)$ (\code{liveIn\_optimise}) and $\opt(\opt(s, X), Y) = \opt(s, Y)$ (\code{optimise\_optimise}). In particular $\opt(\opt(s, L), L) = \opt(s, L)$ (\code{optimise\_idem}).

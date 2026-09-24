@@ -1,4 +1,5 @@
 import Liveness.Optimisation.Correctness
+import Liveness.Optimisation.Compact
 import Liveness.Interp
 import Liveness.Pretty
 
@@ -141,6 +142,20 @@ theorem nonterminating_diverges (σ : State) : Diverges (nonterminating, σ) :=
 theorem nonterminating_optimised_diverges (σ : State) :
     Diverges (optimise nonterminating nonterminatingObs, σ) :=
   (dse_preserves_divergence nonterminating nonterminatingObs σ).1 (nonterminating_diverges σ)
+
+theorem nonterminating_compact :
+    optimiseCompact nonterminating nonterminatingObs = «while» (const 1) skip := by
+  unfold optimiseCompact
+  rw [nonterminating_optimise]
+  decide
+
+theorem loopCarried_compact :
+    optimiseCompact loopCarried loopCarriedObs =
+      seq (assign "x" (const 0))
+        («while» (sub (var "x") (const 10)) (assign "x" (add (var "x") (const 1)))) := by
+  unfold optimiseCompact
+  rw [loopCarried_optimise]
+  decide
 
 theorem nonterminatingExpected_diverges (σ : State) : Diverges (nonterminatingExpected, σ) :=
   nonterminating_optimise ▸ nonterminating_optimised_diverges σ
