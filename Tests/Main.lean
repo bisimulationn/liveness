@@ -47,11 +47,40 @@ def cases : List Case :=
 
 def fuel : Nat := 2000
 
+structure Rng where
+  state : UInt64
+
+def Rng.next (g : Rng) : Rng × Int :=
+  let s := g.state * 6364136223846793005 + 1442695040888963407
+  let v : Int := ((s >>> 33).toNat % 17 : Nat)
+  (⟨s⟩, v - 8)
+
+def randomState (g : Rng) : List String → Rng × State
+  | [] => (g, zeroState)
+  | x :: xs =>
+    let (g, σ) := randomState g xs
+    let (g, v) := g.next
+    (g, σ.update x v)
+
+def randomStates (g : Rng) (vars : List String) : Nat → Rng × List State
+  | 0 => (g, [])
+  | n + 1 =>
+    let (g, σ) := randomState g vars
+    let (g, rest) := randomStates g vars n
+    (g, σ :: rest)
+
+def samples : Nat := 25
+
+def agreeOnSamples (L : VarSet) (source target compacted : Stmt) (states : List State) : Bool :=
+  states.all fun σ =>
+    let srcRun := run fuel source σ
+    sameObservation L srcRun (run fuel target σ) && sameObservation L srcRun (run fuel compacted σ)
+
 def describeOutcome (L : VarSet) : Outcome → String
   | .finished σ => "finished with " ++ toString (observe L σ)
   | .outOfFuel _ => "fuel exhausted after " ++ toString fuel ++ " steps"
 
-def runCase (c : Case) : IO Bool := do
+def runCase (seed : UInt64) (c : Case) : IO Bool := do
   let (target, liveSet) := dse c.program c.observed
   let shapeOk := target == c.expected
   let liveOk := setEq liveSet c.expectedLiveIn
@@ -61,6 +90,8 @@ def runCase (c : Case) : IO Bool := do
   let compacted := compact target
   let cmpRun := run fuel compacted initial
   let cmpOk := sameObservation c.observed srcRun cmpRun && compacted.size ≤ target.size
+  let (_, states) := randomStates ⟨seed⟩ (c.program.vars ∪ c.observed) samples
+  let randomOk := agreeOnSamples c.observed c.program target compacted states
   IO.println s!"== {c.name}"
   IO.println s!"observed: {c.observed}"
   IO.println "source:"
@@ -72,12 +103,16 @@ def runCase (c : Case) : IO Bool := do
   IO.println s!"live-in: {liveSet}"
   IO.println s!"source run: {describeOutcome c.observed srcRun}"
   IO.println s!"target run: {describeOutcome c.observed tgtRun}"
-  IO.println s!"shape {if shapeOk then "ok" else "MISMATCH"}, live-in {if liveOk then "ok" else "MISMATCH"}, observation {if semOk then "ok" else "MISMATCH"}, compaction {if cmpOk then "ok" else "MISMATCH"}"
+  IO.println s!"shape {if shapeOk then "ok" else "MISMATCH"}, live-in {if liveOk then "ok" else "MISMATCH"}, observation {if semOk then "ok" else "MISMATCH"}, compaction {if cmpOk then "ok" else "MISMATCH"}, {samples} random states {if randomOk then "ok" else "MISMATCH"}"
   IO.println ""
-  pure (shapeOk && liveOk && semOk && cmpOk)
+  pure (shapeOk && liveOk && semOk && cmpOk && randomOk)
 
-def main : IO UInt32 := do
-  let results ← cases.mapM runCase
+def main (args : List String) : IO UInt32 := do
+  let seed : UInt64 := match args with
+    | s :: _ => s.toNat?.map (·.toUInt64) |>.getD 20260808
+    | [] => 20260808
+  IO.println s!"seed {seed}"
+  let results ← cases.mapM (runCase seed)
   let failures := results.filter (· == false) |>.length
   if failures == 0 then
     IO.println s!"all {results.length} cases passed"
