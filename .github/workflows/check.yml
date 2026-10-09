@@ -1,0 +1,28 @@
+name: Check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install elan and the pinned toolchain
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat lean-toolchain)"
+      - name: Reject proof holes and unchecked evaluation
+        run: |
+          ! grep -rnE '\b(sorry|admit|native_decide)\b' Liveness Liveness.lean Tests
+      - run: lake build
+      - run: lake exe tests
+      - name: Audit axioms of the main theorems
+        run: |
+          lake env lean Tests/Axioms.lean | tee axioms.txt
+          test "$(grep -c 'depends on axioms' axioms.txt)" -eq 12
+          ! grep -vE "depends on axioms: \[(propext|Classical\.choice|Quot\.sound)(, (propext|Classical\.choice|Quot\.sound))*\]$" axioms.txt
